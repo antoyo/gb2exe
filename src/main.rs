@@ -16,13 +16,12 @@
  */
 
 /*
- * TODO: refactoriser.
- * TODO: Enlever les clones.
- * TODO: créer une API personnalisée pour des fins de tests/debug (par exemple, écrire à une
- * adresse précise affiche un caractère sur stdout, précise le code de retour du programme — cela
- * permettra de créer un Hello World en assembleur GameBoy).
- * TODO: Détecter les blocs de base.
- * TODO: Détecter les conditions/boucles/fonctions.
+ * TODO: Add command-line arguments (specify output file, does not compile and keep the C file).
+ * TODO: Add automated tests.
+ * TODO: Refactor.
+ * TODO: Remove the clone() calls.
+ * TODO: Detect basic blocks.
+ * TODO: Detect conditions/loops/functions.
  */
 
 //! Custom API:
@@ -32,6 +31,7 @@
 mod asm;
 mod ast;
 mod bios;
+mod compiler;
 mod decompiler;
 mod driver;
 mod gen;

@@ -30,7 +30,7 @@ pub fn gen(program: Program) -> String {
     let codes: Vec<_> = program.variables.iter().map(gen_var)
         .chain(program.functions.iter().map(gen_func))
         .collect();
-    codes.join("\n\n")
+    gen_includes() + &codes.join("\n\n")
 }
 
 /// Generate the code for the condition code.
@@ -62,6 +62,12 @@ fn gen_func(function: &Function) -> String {
     format!("void {}() {{\n{}\n}}", function.name, statements)
 }
 
+/// Generate the C code for the includes.
+fn gen_includes() -> String {
+    let includes = vec!["stdio.h", "stdlib.h"];
+    format!("#include <{}>\n\n", includes.join(">\n#include <"))
+}
+
 /// Generate the C code for an l-value.
 fn gen_lvalue(lvalue: &LeftValue) -> String {
     match *lvalue {
@@ -82,7 +88,7 @@ fn gen_rvalue(rvalue: &RightValue) -> String {
 fn gen_statement(statement: &Statement) -> String {
     match *statement {
         Assignment(ref lvalue, ref expression) => format!("{} = {};", gen_lvalue(lvalue), gen_expression(expression)),
-        Declaration(ref name) => format!("{} {};", "char*", name), // TODO: do type inference to give the right type.
+        Declaration(ref name) => format!("{} {};", "char*", name), // TODO: do type inference to give the right type. Not sure it will be possible because the same register can be used for different types.
         Expr(ref expression) => format!("{};", gen_expression(expression)),
         Goto(ref name) => format!("goto {};", name),
         Increment(ref lvalue) => format!("{}++;", gen_lvalue(lvalue)),

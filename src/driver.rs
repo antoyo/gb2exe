@@ -21,6 +21,7 @@ use std::fs::File;
 use std::io::Read;
 
 use asm::prettify::prettify;
+use compiler::compile;
 use decompiler::Decompiler;
 use gen::gen;
 use rom::Rom;
@@ -35,5 +36,5 @@ pub fn drive(rom_file: &str) {
     let decompiler = Decompiler::new(instructions);
     let program = decompiler.decompile();
     let source = gen(program);
-    println!("{}", source);
+    compile(source);
 }
