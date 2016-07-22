@@ -16,7 +16,6 @@
  */
 
 /*
- * TODO: Add automated tests.
  * TODO: Refactor.
  * TODO: Remove the clone() calls.
  * TODO: Detect basic blocks.
