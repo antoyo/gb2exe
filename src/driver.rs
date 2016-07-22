@@ -24,10 +24,15 @@ use asm::prettify::prettify;
 use compiler::compile;
 use decompiler::Decompiler;
 use gen::gen;
+use super::Args;
 use rom::Rom;
 
 /// Drive all the compilation steps from decoding the ROM, decompiling it and generating the final C source code.
-pub fn drive(rom_file: &str) {
+pub fn drive(args: Args) {
+    let c_only = args.flag_c_only;
+    let rom_file = args.arg_rom_file;
+    let output_file = args.flag_output;
+
     let mut file = File::open(rom_file).unwrap();
     let mut bytes = vec![];
     file.read_to_end(&mut bytes).unwrap();
@@ -36,5 +41,5 @@ pub fn drive(rom_file: &str) {
     let decompiler = Decompiler::new(instructions);
     let program = decompiler.decompile();
     let source = gen(program);
-    compile(source);
+    compile(source, output_file, c_only);
 }

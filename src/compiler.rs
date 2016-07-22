@@ -18,30 +18,40 @@
 //! A wrapper over the GCC compiler.
 
 use std::env;
-use std::fs::{File, create_dir, remove_dir_all};
+use std::fs::{File, copy, create_dir, remove_dir_all};
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
 
 const COMPILER: &'static str = "gcc";
 
 /// Compile the C source code into an executable.
-pub fn compile(source: String) {
+pub fn compile(source: String, output: Option<String>, c_only: bool) {
     // Create a temporary directory.
     let temp_path = env::temp_dir().join("gb2exe");
     let temp_dir = temp_path.to_str().unwrap();
     let _ = create_dir(temp_dir);
 
     // Write the source code to a file.
-    let c_source_path = temp_path.join("main.c");
+    let c_filename = "main.c";
+    let c_source_path = temp_path.join(c_filename);
     let c_source_file = c_source_path.to_str().unwrap();
     let mut file = File::create(c_source_file).unwrap();
     write!(&mut file, "{}", source).unwrap();
 
-    // Compile the source code to an executable.
-    Command::new(COMPILER)
-        .args(&["-o", "main", c_source_file])
-        .status()
-        .unwrap();
+    if c_only {
+        // Copy the file to the current directory.
+        let destination = output.unwrap_or(PathBuf::from(".").join(c_filename).to_str().unwrap().to_string());
+        copy(c_source_file, destination).unwrap();
+    }
+    else {
+        // Compile the source code to an executable.
+        let output = output.unwrap_or("main".to_string());
+        Command::new(COMPILER)
+            .args(&["-o", &output, c_source_file])
+            .status()
+            .unwrap();
+    }
 
     // Remove the temporary directory.
     remove_dir_all(temp_dir).unwrap();

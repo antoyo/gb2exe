@@ -16,7 +16,6 @@
  */
 
 /*
- * TODO: Add command-line arguments (specify output file, does not compile and keep the C file).
  * TODO: Add automated tests.
  * TODO: Refactor.
  * TODO: Remove the clone() calls.
@@ -27,6 +26,9 @@
 //! Custom API:
 //! Write at $FEA0: write to stdout.
 //! Write at $FEB0: exit with code.
+
+extern crate docopt;
+extern crate rustc_serialize;
 
 mod asm;
 mod ast;
@@ -39,16 +41,34 @@ mod rom;
 
 use std::env::args;
 
+use docopt::Docopt;
+
 use driver::drive;
 
-fn main() {
-    let mut args = args();
-    args.next(); // NOTE: ignore the program executable.
+const USAGE: &'static str = "
+GameBoy to Executable
 
-    if let Some(rom_file) = args.next() {
-        drive(&rom_file);
-    }
-    else {
-        println!("Specify the ROM file to compile.");
-    }
+Usage:
+    gb2exe <rom-file> [(-o <exe-file> | --output <exe-file>)] [(-C | --c-only)]
+    gb2exe (-h | --help)
+
+Options:
+    -h --help               Show this help page.
+    -o --output <exe-file>  Set the output file (executable or c source file).
+    -C --c-only             Output the C code only; do not compile, assemble and link.
+";
+
+#[derive(Debug, RustcDecodable)]
+pub struct Args {
+    arg_rom_file: String,
+    flag_c_only: bool,
+    flag_output: Option<String>,
+}
+
+fn main() {
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|docopt| docopt.decode())
+        .unwrap_or_else(|error| error.exit());
+
+    drive(args);
 }
