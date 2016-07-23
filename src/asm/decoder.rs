@@ -145,8 +145,6 @@ pub enum Register {
     A, B, C, D, E, F, H, L,
     // 16-bit registers
     PC, SP,
-    // Clock for the last instruction.
-    M, T // TODO: to remove.
 }
 
 /// Decode the first instruction in the sequence.

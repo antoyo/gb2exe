@@ -22,7 +22,15 @@ use std::collections::{HashSet, VecDeque};
 use asm::decoder::{Instruction, decode};
 use asm::decoder::Address::{AbsoluteAddress, RelativeAddress};
 use asm::decoder::Instruction::*;
+use bios;
 use self::InstructionOrData::*;
+
+const BIOS_LOGO_END_ADDRESS: usize = 0xD7;
+const BIOS_LOGO_START_ADDRESS: usize = 0xA8;
+const CARTRIDGE_LOGO_END_ADDRESS: usize = 0x133;
+const CARTRIDGE_LOGO_START_ADDRESS: usize = 0x104;
+const CHECKSUM_END_ADDRESS: usize = 0x14D;
+const CHECKSUM_START_ADDRESS: usize = 0x134;
 
 /// Either an instruction or data.
 #[derive(Clone, Debug, PartialEq)]
@@ -47,9 +55,14 @@ pub struct Rom {
 
 impl Rom {
     /// Create a new `Rom` by decoding the `bytes`.
-    pub fn new(bytes: &[u8]) -> Rom {
-        Rom {
-            instructions: Rom::decode_instructions(bytes),
+    pub fn new(bytes: &[u8]) -> Option<Rom> {
+        if Rom::valid(bytes) {
+            Some(Rom {
+                instructions: Rom::decode_instructions(bytes),
+            })
+        }
+        else {
+            None
         }
     }
 
@@ -89,6 +102,17 @@ impl Rom {
         }
 
         instructions
+    }
+
+    /// Check if the rom is valid by validating the nintendo logo and the checksum.
+    fn valid(bytes: &[u8]) -> bool {
+        let bytes_to_check = bytes[CHECKSUM_START_ADDRESS .. CHECKSUM_END_ADDRESS + 1].iter();
+        let byte_sum = bytes_to_check.fold(0, |acc, &byte| acc + byte as i32);
+        let checksum = (0x19 + byte_sum) % 256;
+
+        checksum == 0 &&
+            bytes[CARTRIDGE_LOGO_START_ADDRESS .. CARTRIDGE_LOGO_END_ADDRESS + 1] ==
+            bios::BIOS[BIOS_LOGO_START_ADDRESS .. BIOS_LOGO_END_ADDRESS + 1]
     }
 }
 
