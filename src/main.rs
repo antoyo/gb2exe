@@ -16,8 +16,6 @@
  */
 
 /*
- * TODO: Refactor.
- * TODO: Remove the clone() calls.
  * TODO: Detect basic blocks.
  * TODO: Detect conditions/loops/functions.
  */

@@ -87,11 +87,17 @@ fn gen_rvalue(rvalue: &RightValue) -> String {
 /// Generate the C code for a statement.
 fn gen_statement(statement: &Statement) -> String {
     match *statement {
-        Assignment(ref lvalue, ref expression) => format!("{} = {};", gen_lvalue(lvalue), gen_expression(expression)),
-        Declaration(ref name) => format!("{} {};", "char*", name), // TODO: do type inference to give the right type. Not sure it will be possible because the same register can be used for different types.
-        Expr(ref expression) => format!("{};", gen_expression(expression)),
-        Goto(ref name) => format!("goto {};", name),
-        Increment(ref lvalue) => format!("{}++;", gen_lvalue(lvalue)),
+        Assignment(ref lvalue, ref expression) =>
+            format!("{} = {};", gen_lvalue(lvalue), gen_expression(expression)),
+        Declaration(ref name) =>
+            // TODO: do type inference to give the right type. Not sure it will be possible because the same register can be used for different types.
+            format!("{} {};", "char*", name),
+        Expr(ref expression) =>
+            format!("{};", gen_expression(expression)),
+        Goto(ref name) =>
+            format!("goto {};", name),
+        Increment(ref lvalue) =>
+            format!("{}++;", gen_lvalue(lvalue)),
         If(condition_code, ref true_statements, ref else_statements) => {
             let else_code =
                 match *else_statements {
@@ -100,8 +106,10 @@ fn gen_statement(statement: &Statement) -> String {
                 };
             format!("if({}) {{\n{}\n}}{}", gen_condition_code(condition_code), gen_statements(true_statements), else_code)
         },
-        LabelStatement(ref label) => format!("{}:", label),
-        Return(_) => unimplemented!(),
+        LabelStatement(ref label) =>
+            format!("{}:", label),
+        Return(_) =>
+            unimplemented!(),
     }
 }
 

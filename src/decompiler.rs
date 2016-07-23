@@ -101,22 +101,21 @@ impl Instructions {
         match instruction {
             NoRepeat(Instr(ref mut instruction)) => {
                 match *instruction {
+                    Cmp(Direct(Imm8(_))) => (),
+                    Halt => (),
                     Inc(Direct(Regs(_, _))) => (),
                     // NOTE: an immediate value of 16 bits is an address.
-                    InconditionalJump(ref mut address) => {
-                        self.add_visited_label(address, instruction_address);
-                    },
-                    Jump(_, ref mut address) => {
-                        self.add_visited_label(address, instruction_address);
-                    },
-                    Load(_, Direct(AddressOperand(ref mut address))) => {
-                        self.add_visited_label(address, instruction_address);
-                    },
+                    InconditionalJump(ref mut address) =>
+                        self.add_visited_label(address, instruction_address),
+                    Jump(_, ref mut address) =>
+                        self.add_visited_label(address, instruction_address),
+                    Load(_, Direct(AddressOperand(ref mut address))) =>
+                        self.add_visited_label(address, instruction_address),
                     /*Load(Indirection(AddressOperand(ref mut address)), _) =>
                         self.add_visited_label(address, instruction_address),*/ // TODO: remove if not necessary. Or use it only when the address is not known (i.e. not a write to the screen).
                     Load(_, _) => (),
                     Nop => (),
-                    _ => (), //panic!("Instruction: {:?}", instruction),
+                    _ => panic!("Instruction: {:?}", instruction),
                 }
             },
             _ => (),
@@ -157,6 +156,7 @@ impl Instructions {
     }
 }
 
+/// Get an instruction by indexing with a label.
 impl<'a> Index<&'a String> for Instructions {
     type Output = RepeatableInstruction;
 
@@ -214,9 +214,12 @@ impl Decompiler {
         match *expression {
             Direct(ref direct) =>
                 match *direct {
-                    ref reg@Reg(_) | ref reg@Regs(_, _) => Val(LValue(Var(register_to_name(&reg)))),
-                    AddressOperand(AddressLabel(ref label)) => Val(LValue(self.get_value_from_label(label))),
-                    Imm8(number) => Val(RValue(IntLiteral(number))),
+                    ref reg@Reg(_) | ref reg@Regs(_, _) =>
+                        Val(LValue(Var(register_to_name(&reg)))),
+                    AddressOperand(AddressLabel(ref label)) =>
+                        Val(LValue(self.get_value_from_label(label))),
+                    Imm8(number) =>
+                        Val(RValue(IntLiteral(number))),
                     _ => panic!("Unimplemented direct expression {:?}.", direct),
                 },
             Indirection(ref reg@Regs(_, _)) => Val(LValue(Indirect(register_to_name(reg)))),
@@ -227,7 +230,8 @@ impl Decompiler {
     /// Get the index of the statements pointing to the jump contained within the statement.
     fn extract_jumps(&self, statement: &Statement) -> Vec<usize> {
         match *statement {
-            Goto(ref label) => vec![self.instructions.labels[label]],
+            Goto(ref label) =>
+                vec![self.instructions.labels[label]],
             If(_, ref true_statements, ref else_statements) =>
                 extract_from_if!(true_statements, else_statements, Decompiler::extract_jumps, self),
             _ => vec![],
@@ -338,8 +342,10 @@ impl Decompiler {
 /// Get the variable name from the instruction if it uses a variable.
 fn extract_variables(statement: &Statement) -> Vec<String> {
     match *statement {
-        Assignment(Var(ref name), _) => vec![name.clone()],
-        Expr(_) | Goto(_) | Increment(_) => vec![],
+        Assignment(Var(ref name), _) =>
+            vec![name.clone()],
+        Expr(_) | Goto(_) | Increment(_) =>
+            vec![],
         If(_, ref true_statements, ref else_statements) =>
             extract_from_if!(true_statements, else_statements, extract_variables),
         _ => panic!("{:?}", statement),
@@ -351,7 +357,8 @@ fn get_value_from_data(data: &RepeatableInstruction) -> Value {
     match *data {
         NoRepeat(ref data) =>
             match *data {
-                Ascii(ref string) => RValue(StringLiteral(string.clone())),
+                Ascii(ref string) =>
+                    RValue(StringLiteral(string.clone())),
                 _ => panic!("Unexpected data: {:?}.", data),
             }
         ,

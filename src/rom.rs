@@ -95,7 +95,8 @@ impl Rom {
 /// Get the address inside the instruction if there is one (jump to address).
 fn get_address_in_instruction(instruction: &Instruction, current_address: usize) -> Option<usize> {
     match *instruction {
-        Call(AbsoluteAddress(addr)) | InconditionalJump(AbsoluteAddress(addr)) | Jump(_, AbsoluteAddress(addr)) => Some(addr as usize),
+        Call(AbsoluteAddress(addr)) | InconditionalJump(AbsoluteAddress(addr)) | Jump(_, AbsoluteAddress(addr)) =>
+            Some(addr as usize),
         InconditionalJump(RelativeAddress(delta)) | Jump(_, RelativeAddress(delta)) =>
             // NOTE: plus two because the instruction is one byte and the delta is one byte.
             Some((current_address as isize + delta as isize) as usize + 2),
