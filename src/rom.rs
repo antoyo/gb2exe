@@ -31,6 +31,7 @@ const CARTRIDGE_LOGO_END_ADDRESS: usize = 0x133;
 const CARTRIDGE_LOGO_START_ADDRESS: usize = 0x104;
 const CHECKSUM_END_ADDRESS: usize = 0x14D;
 const CHECKSUM_START_ADDRESS: usize = 0x134;
+const TITLE_ADDRESS: usize = 0x134;
 
 /// Either an instruction or data.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +52,7 @@ pub enum RepeatableInstruction {
 /// A GameBoy ROM.
 pub struct Rom {
     pub instructions: Vec<InstructionOrData>,
+    pub title: String,
 }
 
 impl Rom {
@@ -59,6 +61,7 @@ impl Rom {
         if Rom::valid(bytes) {
             Some(Rom {
                 instructions: Rom::decode_instructions(bytes),
+                title: Rom::decode_title(bytes),
             })
         }
         else {
@@ -104,6 +107,19 @@ impl Rom {
         instructions
     }
 
+    /// Get the rom title and format it.
+    fn decode_title(bytes: &[u8]) -> String {
+        let result: String = bytes[TITLE_ADDRESS..].iter()
+            .take_while(|&&byte| byte != 0)
+            .map(|&byte| byte as char)
+            .collect();
+
+        // Make the first letter of each word uppercase.
+        result.split(' ')
+            .map(title_case)
+            .collect()
+    }
+
     /// Check if the rom is valid by validating the nintendo logo and the checksum.
     fn valid(bytes: &[u8]) -> bool {
         let bytes_to_check = bytes[CHECKSUM_START_ADDRESS .. CHECKSUM_END_ADDRESS + 1].iter();
@@ -133,5 +149,19 @@ fn is_inconditional_jump(instruction: &Instruction) -> bool {
     match *instruction {
         InconditionalJump(_) | Ret => false,
         _ => true,
+    }
+}
+
+/// Make the first letter of string uppercase and the rest lowercase.
+fn title_case(string: &str) -> String {
+    let mut chars = string.chars();
+    match chars.next() {
+        Some(char) => {
+            let rest = chars.map(|char| char.to_lowercase().collect::<String>())
+                .collect::<Vec<_>>()
+                .join("");
+            char.to_uppercase().collect::<String>() + &rest
+        },
+        None => String::new(),
     }
 }

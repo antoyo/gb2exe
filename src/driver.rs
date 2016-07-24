@@ -32,6 +32,7 @@ pub fn drive(args: Args) {
     let c_only = args.flag_c_only;
     let rom_file = args.arg_rom_file;
     let output_file = args.flag_output;
+    let debug = args.flag_debug;
 
     match File::open(&rom_file) {
         Ok(mut file) => {
@@ -39,9 +40,9 @@ pub fn drive(args: Args) {
             file.read_to_end(&mut bytes).unwrap();
             if let Some(rom) = Rom::new(&bytes) {
                 let instructions = prettify(rom.instructions);
-                let decompiler = Decompiler::new(instructions);
+                let decompiler = Decompiler::new(instructions, debug);
                 let program = decompiler.decompile();
-                let source = gen(program);
+                let source = gen(program, &rom.title, debug);
                 compile(source, output_file, c_only);
             }
             else {

@@ -26,7 +26,7 @@ fn compile(rom_file: &str) -> String {
 
     let output = Command::new("target/debug/gb2exe")
         .arg(&format!("tests/{}", rom_file))
-        .args(&["-o", &output_executable])
+        .args(&["--debug", "-o", &output_executable])
         .output()
         .unwrap();
 
@@ -70,4 +70,5 @@ fn header_checks() {
 fn simple_example() {
     let result = compile_and_execute("game.gb");
     assert_eq!("Hello World!\n", result);
+    // TODO: check the window title.
 }

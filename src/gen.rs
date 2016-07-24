@@ -25,12 +25,50 @@ use ast::RightValue::{self, IntLiteral, StringLiteral};
 use ast::Statement::{self, Assignment, Declaration, Expr, Goto, Increment, If, LabelStatement, Return};
 use ast::Value::{self, LValue, RValue};
 
+const MAIN_FUNCTION_GUI: &'static str = "
+void game();
+
+int main() {
+    sfVideoMode mode = {160, 144, 2};
+    sfRenderWindow* window = sfRenderWindow_create(mode, \"{}\", sfClose, NULL);
+    if(!window) {
+        return EXIT_FAILURE;
+    }
+
+    sfRenderWindow_clear(window, sfBlack);
+    sfRenderWindow_display(window);
+
+    game();
+
+    sfRenderWindow_destroy(window);
+
+    return EXIT_SUCCESS;
+}
+
+";
+
+const MAIN_FUNCTION_TERMINAL: &'static str = "
+void game();
+
+int main() {
+    game();
+}
+
+";
+
 /// Generate the C code from the AST.
-pub fn gen(program: Program) -> String {
+pub fn gen(program: Program, title: &str, test: bool) -> String {
     let codes: Vec<_> = program.variables.iter().map(gen_var)
         .chain(program.functions.iter().map(gen_func))
         .collect();
-    gen_includes() + &codes.join("\n\n")
+    let main =
+        if test {
+            MAIN_FUNCTION_TERMINAL.to_string()
+        }
+        else {
+            MAIN_FUNCTION_GUI.replace("{}", title)
+        };
+    gen_includes() + &main + &codes.join("\n\n")
 }
 
 /// Generate the code for the condition code.
@@ -64,8 +102,8 @@ fn gen_func(function: &Function) -> String {
 
 /// Generate the C code for the includes.
 fn gen_includes() -> String {
-    let includes = vec!["stdio.h", "stdlib.h"];
-    format!("#include <{}>\n\n", includes.join(">\n#include <"))
+    let includes = vec!["stdio.h", "stdlib.h", "SFML/Graphics.h"];
+    format!("#include <{}>\n", includes.join(">\n#include <"))
 }
 
 /// Generate the C code for an l-value.

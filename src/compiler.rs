@@ -50,7 +50,7 @@ pub fn compile(source: String, output: Option<String>, c_only: bool) {
                 // Compile the source code to an executable.
                 let output = output.unwrap_or("main".to_string());
                 Command::new(COMPILER)
-                    .args(&["-o", &output, c_source_file])
+                    .args(&["-lcsfml-graphics", "-lcsfml-window", "-lcsfml-system", "-o", &output, c_source_file])
                     .status()
                     .unwrap();
             }

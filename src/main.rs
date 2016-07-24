@@ -16,8 +16,8 @@
  */
 
 /*
- * TODO: The bios does the following:
- * * Clear the screen.
+ * The bios does the following:
+ * * Clear the screen (done).
  * * Initialize audio.
  * * Show the Nintendo logo:
  * * * Initilize the palette.
@@ -25,8 +25,10 @@
  * * * Play beeps.
  * * Check the Nintendo logo (done).
  * * Verify the checksum (done).
+ *
+ * TODO: Add close event (probably when the other events are checked, or on Halt).
  * TODO: Detect basic blocks.
- * TODO: Detect conditions/loops/functions.
+ * TODO: Detect conditions/loops/infinite loops (game loops?)/functions.
  */
 
 //! Custom API:
@@ -55,7 +57,7 @@ const USAGE: &'static str = "
 GameBoy to Executable
 
 Usage:
-    gb2exe <rom-file> [(-o <exe-file> | --output <exe-file>)] [(-C | --c-only)]
+    gb2exe <rom-file> [(-o <exe-file> | --output <exe-file>)] [(-C | --c-only)] [--debug]
     gb2exe (-h | --help)
 
 Options:
@@ -68,6 +70,7 @@ Options:
 pub struct Args {
     arg_rom_file: String,
     flag_c_only: bool,
+    flag_debug: bool,
     flag_output: Option<String>,
 }
 

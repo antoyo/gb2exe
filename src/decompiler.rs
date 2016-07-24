@@ -37,6 +37,7 @@ const EXIT_ADDRESS: u16 = 0xFEB0; // Address mapped to exit.
 const START_ADDRESS: u16 = 0x100;
 const WRITE_ADDRESS: u16 = 0xFEA0; // Address mapped to write to stdout.
 
+/// Call the extract function on every statement.
 macro_rules! extract_from_if {
     ($true_statements:expr, $else_statements:expr, $extract_func:path$(, $parameter:expr)*) => {{
         let false_statements =
@@ -55,6 +56,19 @@ macro_rules! extract_from_if {
     }};
 }
 
+/// Produce a call statement if it is not in debug mode.
+macro_rules! mapped_call {
+    ($decompiler:expr, $function_name:expr, $value:expr, $index:expr) => {
+        if $decompiler.debug {
+            Expr(Call($function_name.to_string(), vec![$decompiler.expression(&$value)]))
+        }
+        else {
+            next_statement!($decompiler, $index)
+        }
+    };
+}
+
+/// Ignore the current instruction and decompile the next one.
 macro_rules! next_statement {
     ($decompiler:expr, $index:expr) => {{
         *$index += 1;
@@ -171,15 +185,17 @@ pub struct Decompiler {
     address_map: HashMap<String, LeftValue>,
     instructions: Instructions,
     program: Program,
+    debug: bool,
 }
 
 impl Decompiler {
     /// Create a new decompiler.
-    pub fn new(instructions: Instructions) -> Decompiler {
+    pub fn new(instructions: Instructions, debug: bool) -> Decompiler {
         Decompiler {
             address_map: HashMap::new(),
             instructions: instructions,
             program: Program::new(),
+            debug: debug,
         }
     }
 
@@ -196,7 +212,7 @@ impl Decompiler {
         let start_label = "start".to_string();
         assert_eq!(self.instructions[&start_label], NoRepeat(Instr(Nop)));
 
-        let main_label =
+        let game_label =
             if let &NoRepeat(Instr(InconditionalJump(AddressLabel(ref label)))) = self.instructions.after(&start_label) {
                 label.clone()
             }
@@ -204,7 +220,7 @@ impl Decompiler {
                 panic!("Expecting an inconditional jump at {:X}", START_ADDRESS + 1);
             };
 
-        let function = self.function("main", main_label);
+        let function = self.function("game", game_label);
         self.program.add_func(function);
         self.program
     }
@@ -325,9 +341,9 @@ impl Decompiler {
 
                     // Write to mapped address.
                     Load(Indirection(AddressOperand(AbsoluteAddress(WRITE_ADDRESS))), ref value) =>
-                        Expr(Call("putchar".to_string(), vec![self.expression(&value)])),
+                        mapped_call!(self, "putchar", value, index),
                     Load(Indirection(AddressOperand(AbsoluteAddress(EXIT_ADDRESS))), ref value) =>
-                        Expr(Call("exit".to_string(), vec![self.expression(&value)])),
+                        mapped_call!(self, "exit", value, index),
 
                     Load(ref destination, ref value) =>
                         Assignment(self.left_value(destination), self.expression(value)),
