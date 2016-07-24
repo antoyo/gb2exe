@@ -33,17 +33,21 @@ pub fn drive(args: Args) {
     let rom_file = args.arg_rom_file;
     let output_file = args.flag_output;
 
-    let mut file = File::open(rom_file).unwrap();
-    let mut bytes = vec![];
-    file.read_to_end(&mut bytes).unwrap();
-    if let Some(rom) = Rom::new(&bytes) {
-        let instructions = prettify(rom.instructions);
-        let decompiler = Decompiler::new(instructions);
-        let program = decompiler.decompile();
-        let source = gen(program);
-        compile(source, output_file, c_only);
-    }
-    else {
-        println!("Invalid rom file.");
+    match File::open(&rom_file) {
+        Ok(mut file) => {
+            let mut bytes = vec![];
+            file.read_to_end(&mut bytes).unwrap();
+            if let Some(rom) = Rom::new(&bytes) {
+                let instructions = prettify(rom.instructions);
+                let decompiler = Decompiler::new(instructions);
+                let program = decompiler.decompile();
+                let source = gen(program);
+                compile(source, output_file, c_only);
+            }
+            else {
+                println!("Invalid rom file.");
+            }
+        },
+        Err(error) => println!("Unable to open file {}: {}", rom_file, error),
     }
 }

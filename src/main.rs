@@ -25,7 +25,6 @@
  * * * Play beeps.
  * * Check the Nintendo logo (done).
  * * Verify the checksum (done).
- * TODO: Handle the errors instead of ignoring them (avoid unwrap).
  * TODO: Detect basic blocks.
  * TODO: Detect conditions/loops/functions.
  */

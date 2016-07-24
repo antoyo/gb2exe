@@ -36,23 +36,28 @@ pub fn compile(source: String, output: Option<String>, c_only: bool) {
     let c_filename = "main.c";
     let c_source_path = temp_path.join(c_filename);
     let c_source_file = c_source_path.to_str().unwrap();
-    let mut file = File::create(c_source_file).unwrap();
-    write!(&mut file, "{}", source).unwrap();
+    match File::create(c_source_file) {
+        Ok(mut file) => {
+            write!(&mut file, "{}", source).unwrap();
 
-    if c_only {
-        // Copy the file to the current directory.
-        let destination = output.unwrap_or(PathBuf::from(".").join(c_filename).to_str().unwrap().to_string());
-        copy(c_source_file, destination).unwrap();
-    }
-    else {
-        // Compile the source code to an executable.
-        let output = output.unwrap_or("main".to_string());
-        Command::new(COMPILER)
-            .args(&["-o", &output, c_source_file])
-            .status()
-            .unwrap();
-    }
+            if c_only {
+                // Copy the file to the current directory.
+                let default_output = PathBuf::from(".").join(c_filename).to_str().unwrap().to_string();
+                let destination = output.unwrap_or(default_output);
+                copy(c_source_file, destination).unwrap();
+            }
+            else {
+                // Compile the source code to an executable.
+                let output = output.unwrap_or("main".to_string());
+                Command::new(COMPILER)
+                    .args(&["-o", &output, c_source_file])
+                    .status()
+                    .unwrap();
+            }
 
-    // Remove the temporary directory.
-    remove_dir_all(temp_dir).unwrap();
+            // Remove the temporary directory.
+            remove_dir_all(temp_dir).unwrap();
+        },
+        Err(error) => println!("Unable to create file {}: {}", c_source_file, error),
+    }
 }

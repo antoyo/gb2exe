@@ -222,7 +222,8 @@ impl Decompiler {
                         Val(RValue(IntLiteral(number))),
                     _ => panic!("Unimplemented direct expression {:?}.", direct),
                 },
-            Indirection(ref reg@Regs(_, _)) => Val(LValue(Indirect(register_to_name(reg)))),
+            Indirection(ref reg@Regs(_, _)) =>
+                Val(LValue(Indirect(register_to_name(reg)))),
             _ => panic!("Unimplemented expression {:?}.", expression),
         }
     }
