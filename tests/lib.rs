@@ -59,7 +59,13 @@ fn get_output_executable(rom_file: &str) -> String {
 
 #[test]
 fn header_checks() {
-    let rom_files = ["invalid_checksum1.gb", "invalid_checksum2.gb", "invalid_header1.gb", "invalid_header2.gb"];
+    let rom_files = [
+        "invalid_checksum1.gb",
+        "invalid_checksum2.gb",
+        "invalid_header1.gb",
+        "invalid_header2.gb",
+        "small_file.gb",
+    ];
     for rom_file in &rom_files {
         let result = compile(rom_file);
         assert_eq!("Invalid rom file.\n", result);

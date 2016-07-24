@@ -32,6 +32,7 @@ const CARTRIDGE_LOGO_START_ADDRESS: usize = 0x104;
 const CHECKSUM_END_ADDRESS: usize = 0x14D;
 const CHECKSUM_START_ADDRESS: usize = 0x134;
 const TITLE_ADDRESS: usize = 0x134;
+const TITLE_SIZE: usize = 15;
 
 /// Either an instruction or data.
 #[derive(Clone, Debug, PartialEq)]
@@ -109,7 +110,7 @@ impl Rom {
 
     /// Get the rom title and format it.
     fn decode_title(bytes: &[u8]) -> String {
-        let result: String = bytes[TITLE_ADDRESS..].iter()
+        let result: String = bytes[TITLE_ADDRESS .. TITLE_ADDRESS + TITLE_SIZE + 1].iter()
             .take_while(|&&byte| byte != 0)
             .map(|&byte| byte as char)
             .collect();
@@ -122,11 +123,18 @@ impl Rom {
 
     /// Check if the rom is valid by validating the nintendo logo and the checksum.
     fn valid(bytes: &[u8]) -> bool {
+        if bytes.len() < CHECKSUM_END_ADDRESS {
+            // Rom too small.
+            return false;
+        }
+
+        // Verify the checksum.
         let bytes_to_check = bytes[CHECKSUM_START_ADDRESS .. CHECKSUM_END_ADDRESS + 1].iter();
         let byte_sum = bytes_to_check.fold(0, |acc, &byte| acc + byte as i32);
         let checksum = (0x19 + byte_sum) % 256;
 
         checksum == 0 &&
+            // Verify the logo.
             bytes[CARTRIDGE_LOGO_START_ADDRESS .. CARTRIDGE_LOGO_END_ADDRESS + 1] ==
             bios::BIOS[BIOS_LOGO_START_ADDRESS .. BIOS_LOGO_END_ADDRESS + 1]
     }
