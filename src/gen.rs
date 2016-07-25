@@ -17,7 +17,7 @@
 
 //! C code generator.
 
-use asm::decoder::ConditionCode::{self, NonZero, Zero};
+use asm::decoder::ConditionCode::{self, Carry, NoCarry, NonZero, Zero};
 use ast::{Function, Program, Variable};
 use ast::Expression::{self, Call, Sub, Val};
 use ast::LeftValue::{self, Indirect, Var};
@@ -74,6 +74,7 @@ pub fn gen(program: Program, title: &str, test: bool) -> String {
 /// Generate the code for the condition code.
 fn gen_condition_code(condition_code: ConditionCode) -> String {
     match condition_code {
+        Carry | NoCarry => unimplemented!(),
         NonZero => "NZ".to_string(),
         Zero => "Z == 0".to_string(),
     }
