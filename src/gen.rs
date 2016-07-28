@@ -19,14 +19,75 @@
 
 use asm::decoder::ConditionCode::{self, Carry, NoCarry, NonZero, Zero};
 use ast::{Function, Program, Variable};
-use ast::Expression::{self, Call, Sub, Val};
-use ast::LeftValue::{self, Indirect, Var};
+use ast::Expression::{self, Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, ShiftLeft, ShiftRight, Subtraction, Val};
+use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Var};
 use ast::RightValue::{self, IntLiteral, StringLiteral};
-use ast::Statement::{self, Assignment, Declaration, Expr, Goto, Increment, If, LabelStatement, Return};
+use ast::Statement::{self, Assignment, Decrement, Expr, Goto, If, Increment, Input, Output, LabelStatement, Return};
 use ast::Value::{self, LValue, RValue};
 
+const GLOBALS: &'static str = "
+#define EIGH_K 8192
+
+typedef struct Flags Flags;
+struct Flags {
+    bool zero : 1;
+    bool subtract : 1;
+    bool halfCarry : 1;
+    bool carry : 1;
+    uint8_t zeroes : 4;
+};
+
+Flags flags = { false, false, false, false, 0 };
+
+int const BYTE_BITS = 8;
+
+uint8_t _AF[2] = {0};
+uint8_t _BC[2] = {0};
+uint8_t _DE[2] = {0};
+uint8_t _HL[2] = {0};
+
+#define AF (*(uint16_t*)_AF)
+#define BC (*(uint16_t*)_BC)
+#define DE (*(uint16_t*)_DE)
+//#define HL (*(uint16_t*)_HL) // TODO: decomment.
+
+#define A (_AF[0])
+#define F (_AF[1])
+#define B (_BC[0])
+#define C (_BC[1])
+#define D (_DE[0])
+#define E (_DE[1])
+#define H (_HL[0])
+#define L (_HL[1])
+
+char* HL = 0; // TODO: remove.
+
+uint8_t rotateLeft(uint8_t n) {
+    return (n << 1) | (n >> (BYTE_BITS - 1));
+}
+
+uint8_t rotateRight(uint8_t n) {
+    return (n >> 1) | (n << (BYTE_BITS - 1));
+}
+
+uint8_t swapNibbles(uint8_t n) {
+    return (n & 0x0F) << 4 | (n & 0xF0) >> 4;
+}
+
+uint8_t wram[EIGH_K] = {0};
+
+";
+
 const MAIN_FUNCTION_GUI: &'static str = "
-void game();
+const int BASE_ADDRESS = 0xFF00;
+
+void input(int value, int address) {
+    printf(\"%d = *%d\\n\", value, address + BASE_ADDRESS);
+}
+
+void output(int address, int value) {
+    printf(\"*%d = %d\\n\", address + BASE_ADDRESS, value);
+}
 
 int main() {
     sfVideoMode mode = {160, 144, 2};
@@ -48,19 +109,33 @@ int main() {
 ";
 
 const MAIN_FUNCTION_TERMINAL: &'static str = "
-void game();
-
 int main() {
     game();
 }
 
 ";
 
+/// Generate a correct function name.
+/// If the function starts with a number, prepend "function".
+fn function_name(name: &str) -> String {
+    if name.chars().next().unwrap().is_digit(10) {
+        format!("function{}", name)
+    }
+    else {
+        name.to_string()
+    }
+}
+
 /// Generate the C code from the AST.
 pub fn gen(program: Program, title: &str, test: bool) -> String {
-    let codes: Vec<_> = program.variables.iter().map(gen_var)
-        .chain(program.functions.iter().map(gen_func))
-        .collect();
+    let prototypes: Vec<_> =
+        program.functions.iter()
+            .map(gen_prototype)
+            .collect();
+    let codes: Vec<_> =
+        program.variables.into_iter().map(gen_var)
+            .chain(program.functions.into_iter().map(gen_func))
+            .collect();
     let main =
         if test {
             MAIN_FUNCTION_TERMINAL.to_string()
@@ -68,105 +143,139 @@ pub fn gen(program: Program, title: &str, test: bool) -> String {
         else {
             MAIN_FUNCTION_GUI.replace("{}", title)
         };
-    gen_includes() + &main + &codes.join("\n\n")
+    gen_includes() + GLOBALS + &prototypes.join("\n\n") + &main + &codes.join("\n\n")
 }
 
 /// Generate the code for the condition code.
 fn gen_condition_code(condition_code: ConditionCode) -> String {
     match condition_code {
-        Carry | NoCarry => unimplemented!(),
+        // TODO: use a global flags variable.
+        Carry | NoCarry => "NZ".to_string(), // TODO
         NonZero => "NZ".to_string(),
-        Zero => "Z == 0".to_string(),
+        Zero => "flags.zero == 0".to_string(),
     }
 }
 
 /// Generate the C code for an expression.
-fn gen_expression(expression: &Expression) -> String {
-    match *expression {
-        Call(ref name, ref arguments) => {
-            let args: Vec<_> = arguments.iter().map(gen_expression).collect();
+fn gen_expression(expression: Expression) -> String {
+    match expression {
+        Addition(expr1, expr2) =>
+            format!("{} + {}", gen_expression(*expr1), gen_expression(*expr2)),
+        BitAnd(expr1, expr2) =>
+            format!("{} & {}", gen_expression(*expr1), gen_expression(*expr2)),
+        BitNot(expr) =>
+            format!("~{}", gen_lvalue(expr)),
+        BitOr(expr1, expr2) =>
+            format!("{} ~ {}", gen_expression(*expr1), gen_expression(*expr2)),
+        BitXor(expr1, expr2) =>
+            format!("{} ^ {}", gen_expression(*expr1), gen_expression(*expr2)),
+        FunctionCall(name, arguments) => {
+            let args: Vec<_> = arguments.into_iter().map(gen_expression).collect();
             let args = args.join(", ");
-            format!("{}({})", name, args)
+            format!("{}({})", function_name(&name), args)
         },
-        Sub(ref expr1, ref expr2) =>
-            format!("{} - {}", gen_expression(expr1), gen_expression(expr2)),
-        Val(ref value) =>
+        ShiftLeft(expr1, expr2) =>
+            format!("{} << {}", gen_expression(*expr1), gen_expression(*expr2)),
+        ShiftRight(expr1, expr2) =>
+            format!("{} << {}", gen_expression(*expr1), gen_expression(*expr2)),
+        Subtraction(expr1, expr2) =>
+            format!("{} - {}", gen_expression(*expr1), gen_expression(*expr2)),
+        Val(value) =>
             gen_value(value),
     }
 }
 
 /// Generate the C code for a function.
-fn gen_func(function: &Function) -> String {
-    let statements = gen_statements(&function.statements);
-    format!("void {}() {{\n{}\n}}", function.name, statements)
+fn gen_func(function: Function) -> String {
+    let statements = gen_statements(function.statements);
+    format!("void {}() {{\n{}\n}}", function_name(&function.name), statements)
 }
 
 /// Generate the C code for the includes.
 fn gen_includes() -> String {
-    let includes = vec!["stdio.h", "stdlib.h", "SFML/Graphics.h"];
-    format!("#include <{}>\n", includes.join(">\n#include <"))
+    let includes = vec!["stdbool.h", "stdint.h", "stdio.h", "stdlib.h", "SFML/Graphics.h"];
+    format!("#include <{}>\n\n", includes.join(">\n#include <"))
 }
 
 /// Generate the C code for an l-value.
-fn gen_lvalue(lvalue: &LeftValue) -> String {
-    match *lvalue {
-        Indirect(ref name) => format!("*{}", name),
-        Var(ref name) => name.clone(),
+fn gen_lvalue(lvalue: LeftValue) -> String {
+    match lvalue {
+        Indirect(name) => format!("*{}", name),
+        IndirectIncrement(name) => format!("*({}++)", name),
+        Ram(address) => format!("wram[{}]", address),
+        Var(name) => name.clone(),
     }
 }
 
+/// Generate the C code for a function prototype.
+fn gen_prototype(function: &Function) -> String {
+    format!("void {}();", function_name(&function.name))
+}
+
 /// Generate the C code for an r-value.
-fn gen_rvalue(rvalue: &RightValue) -> String {
-    match *rvalue {
+fn gen_rvalue(rvalue: RightValue) -> String {
+    match rvalue {
         IntLiteral(integer) => integer.to_string(),
-        StringLiteral(ref string) => format!("{:?}", string),
+        StringLiteral(string) => format!("{:?}", string),
     }
 }
 
 /// Generate the C code for a statement.
-fn gen_statement(statement: &Statement) -> String {
-    match *statement {
-        Assignment(ref lvalue, ref expression) =>
+fn gen_statement(statement: Statement) -> String {
+    match statement {
+        Assignment(lvalue, expression) =>
             format!("{} = {};", gen_lvalue(lvalue), gen_expression(expression)),
-        Declaration(ref name) =>
-            // TODO: do type inference to give the right type. Not sure it will be possible because the same register can be used for different types.
-            format!("{} {};", "char*", name),
-        Expr(ref expression) =>
+        Decrement(lvalue) =>
+            format!("{}--;", gen_lvalue(lvalue)),
+        Expr(expression) =>
             format!("{};", gen_expression(expression)),
-        Goto(ref name) =>
-            format!("goto {};", name),
-        Increment(ref lvalue) =>
-            format!("{}++;", gen_lvalue(lvalue)),
-        If(condition_code, ref true_statements, ref else_statements) => {
+        Goto(name) =>
+            format!("goto label{};", name),
+        If(condition_code, true_statements, else_statements) => {
             let else_code =
-                match *else_statements {
-                    Some(ref statements) => format!("else {{\n{}\n}}", gen_statements(statements)),
+                match else_statements {
+                    Some(statements) => format!("else {{\n{}\n}}", gen_statements(statements)),
                     None => "".to_string(),
                 };
             format!("if({}) {{\n{}\n}}{}", gen_condition_code(condition_code), gen_statements(true_statements), else_code)
         },
-        LabelStatement(ref label) =>
-            format!("{}:", label),
-        Return(_) =>
-            unimplemented!(),
+        Increment(lvalue) =>
+            format!("{}++;", gen_lvalue(lvalue)),
+        Input(lvalue, address) =>
+            gen_statement(
+                Expr(FunctionCall(
+                    "input".to_string(),
+                    vec![lvalue, address],
+                ))
+            ),
+        Output(address, value) =>
+            gen_statement(
+                Expr(FunctionCall(
+                    "output".to_string(),
+                    vec![address, value],
+                ))
+            ),
+        LabelStatement(label) =>
+            format!("label{}:", label),
+        Return => "return;".to_string(),
     }
 }
 
 /// Generate the C code for statements.
-fn gen_statements(statements: &[Statement]) -> String {
-    let statements: Vec<_> = statements.iter().map(gen_statement).collect();
+fn gen_statements(statements: Vec<Statement>) -> String {
+    let statements: Vec<_> = statements.into_iter().map(gen_statement).collect();
     statements.join("\n")
 }
 
 /// Generate the C code for a value.
-fn gen_value(value: &Value) -> String {
-    match *value {
-        LValue(ref lvalue) => gen_lvalue(lvalue),
-        RValue(ref rvalue) => gen_rvalue(rvalue),
+fn gen_value(value: Value) -> String {
+    match value {
+        LValue(lvalue) => gen_lvalue(lvalue),
+        RValue(rvalue) => gen_rvalue(rvalue),
     }
 }
 
 /// Generate the C code for a variable.
-fn gen_var(variable: &Variable) -> String {
-    format!("char* {} = {};", variable.name, gen_value(&variable.value))
+fn gen_var(variable: Variable) -> String {
+    format!("char* {} = {};", variable.name, gen_value(variable.value))
 }

@@ -18,6 +18,9 @@
 //! Abstract syntax tree of the decompiled program.
 
 use asm::decoder::ConditionCode;
+use self::Expression::*;
+use self::RightValue::*;
+use self::Value::*;
 
 /// A program abstract syntax tree.
 #[derive(Debug)]
@@ -49,8 +52,15 @@ impl Program {
 /// An expression.
 #[derive(Debug)]
 pub enum Expression {
-    Call(String, Vec<Expression>),
-    Sub(Box<Expression>, Box<Expression>),
+    Addition(Box<Expression>, Box<Expression>),
+    BitAnd(Box<Expression>, Box<Expression>),
+    BitNot(LeftValue),
+    BitOr(Box<Expression>, Box<Expression>),
+    BitXor(Box<Expression>, Box<Expression>),
+    FunctionCall(String, Vec<Expression>),
+    ShiftLeft(Box<Expression>, Box<Expression>),
+    ShiftRight(Box<Expression>, Box<Expression>),
+    Subtraction(Box<Expression>, Box<Expression>),
     Val(Value),
 }
 
@@ -74,24 +84,21 @@ impl Function {
     pub fn add_statement(&mut self, statement: Statement) {
         self.statements.push(statement);
     }
-
-    /// Add a new statement at the start of the function.
-    pub fn prepend_statement(&mut self, statement: Statement) {
-        self.statements.insert(0, statement);
-    }
 }
 
 /// An l-value.
 #[derive(Clone, Debug)]
 pub enum LeftValue {
     Indirect(String),
+    IndirectIncrement(String),
+    Ram(u16),
     Var(String),
 }
 
 /// A r-value.
 #[derive(Clone, Debug)]
 pub enum RightValue {
-    IntLiteral(u8),
+    IntLiteral(u32),
     StringLiteral(String),
 }
 
@@ -99,13 +106,15 @@ pub enum RightValue {
 #[derive(Debug)]
 pub enum Statement {
     Assignment(LeftValue, Expression),
-    Declaration(String),
+    Decrement(LeftValue),
     Expr(Expression),
     Goto(String),
-    Increment(LeftValue),
     If(ConditionCode, Vec<Statement>, Option<Vec<Statement>>),
+    Increment(LeftValue),
+    Input(Expression, Expression),
+    Output(Expression, Expression),
     LabelStatement(String),
-    Return(Value),
+    Return,
 }
 
 /// A value.
@@ -130,4 +139,9 @@ impl Variable {
             value: value,
         }
     }
+}
+
+/// Create an int literal expression.
+pub fn int_val(int: u32) -> Expression {
+    Val(RValue(IntLiteral(int)))
 }

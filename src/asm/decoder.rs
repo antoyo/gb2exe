@@ -74,9 +74,9 @@ macro_rules! imm16 {
 }
 
 /// Get an indirect register operand.
-macro_rules! indirect_reg {
-    ($reg:expr) => {
-        Indirection(Reg($reg))
+macro_rules! indirect_imm16 {
+    ($bytes:expr) => {
+        Indirection(imm16!($bytes))
     };
 }
 
@@ -108,7 +108,7 @@ macro_rules! rel_address {
     };
 }
 
-const BASE_ADDRESS: u16 = 0xFF00;
+pub const BASE_ADDRESS: u16 = 0xFF00;
 const INDIRECT_HL: Operand = indirect_regs!(H, L);
 
 /// Either an absolute address or a label.
@@ -166,7 +166,7 @@ pub enum Instruction {
     RotateRight(Operand),
     RotateRightCarry(Operand),
     ShiftLeftArithmetic(Operand),
-    ShiftRight(Operand),
+    ShiftRightLogical(Operand),
     ShiftRightArithmetic(Operand),
     Sub(Operand, Operand),
     Swap(Operand),
@@ -375,7 +375,7 @@ fn decode_instruction(bytes: &[u8]) -> Instruction {
         0xF2 => Load(reg!(A), base_indirect!(Reg(C))),
         0xF3 => DisableInterrupt,
         0xF5 => Push(A, F),
-        0xFA => Load(reg!(A), indirect_reg!(SP)),
+        0xFA => Load(reg!(A), indirect_imm16!(bytes)),
         0xFB => EnableInterrupt,
         0xFE => Cmp(direct_imm8!(bytes)),
         _ => panic!("Unimplemented opcode 0x{:02X}", bytes[0]),
@@ -441,14 +441,14 @@ fn decode_extended_instruction(byte: u8) -> Instruction {
         0x35 => Swap(reg!(L)),
         0x36 => Swap(INDIRECT_HL),
         0x37 => Swap(reg!(A)),
-        0x38 => ShiftRight(reg!(B)),
-        0x39 => ShiftRight(reg!(C)),
-        0x3A => ShiftRight(reg!(D)),
-        0x3B => ShiftRight(reg!(E)),
-        0x3C => ShiftRight(reg!(H)),
-        0x3D => ShiftRight(reg!(L)),
-        0x3E => ShiftRight(INDIRECT_HL),
-        0x3F => ShiftRight(reg!(A)),
+        0x38 => ShiftRightLogical(reg!(B)),
+        0x39 => ShiftRightLogical(reg!(C)),
+        0x3A => ShiftRightLogical(reg!(D)),
+        0x3B => ShiftRightLogical(reg!(E)),
+        0x3C => ShiftRightLogical(reg!(H)),
+        0x3D => ShiftRightLogical(reg!(L)),
+        0x3E => ShiftRightLogical(INDIRECT_HL),
+        0x3F => ShiftRightLogical(reg!(A)),
         0x40 => Bit(0, reg!(B)),
         0x41 => Bit(0, reg!(C)),
         0x42 => Bit(0, reg!(D)),

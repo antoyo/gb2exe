@@ -74,6 +74,7 @@ impl Rom {
     fn decode_instructions(bytes: &[u8]) -> Vec<InstructionOrData> {
         let mut instruction_addresses = VecDeque::new();
         instruction_addresses.push_back(0x100);
+
         let mut visited = HashSet::new();
 
         let mut instructions: Vec<_> = bytes.iter()
@@ -81,27 +82,29 @@ impl Rom {
             .collect();
 
         while let Some(address) = instruction_addresses.pop_front() {
-            visited.insert(address);
-            let mut cont = true;
-            let mut i = address;
+            if !visited.contains(&address) {
+                visited.insert(address);
+                let mut cont = true;
+                let mut i = address;
 
-            while cont {
-                let (instruction, size) = decode(&bytes[i..]);
-                cont = is_inconditional_jump(&instruction);
+                while cont {
+                    let (instruction, size) = decode(&bytes[i..]);
+                    cont = is_inconditional_jump(&instruction);
 
-                if let Some(addr) = get_address_in_instruction(&instruction, i) {
-                    if !visited.contains(&addr) {
-                        instruction_addresses.push_back(addr);
+                    if let Some(addr) = get_address_in_instruction(&instruction, i) {
+                        if !visited.contains(&addr) {
+                            instruction_addresses.push_back(addr);
+                        }
                     }
+
+                    instructions[i] = Instr(instruction);
+
+                    for index in i + 1 .. i + size {
+                        instructions[index] = Deleted;
+                    }
+
+                    i += size;
                 }
-
-                instructions[i] = Instr(instruction);
-
-                for index in i + 1 .. i + size {
-                    instructions[index] = Deleted;
-                }
-
-                i += size;
             }
         }
 

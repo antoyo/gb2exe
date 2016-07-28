@@ -26,6 +26,8 @@
  * * Check the Nintendo logo (done).
  * * Verify the checksum (done).
  *
+ * TODO: Don't produce global variables. Create one global variable holding all the ROM memory.
+ *
  * TODO: Add close event (probably when the other events are checked, or on Halt).
  * TODO: Detect basic blocks.
  * TODO: Detect conditions/loops/infinite loops (game loops?)/functions.

@@ -17,25 +17,37 @@
 
 //! A Z80 assembly to AST decompiler.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Index;
 
-use ast::{Expression, Function, Program, Statement, Variable};
-use ast::Expression::{Call, Sub, Val};
-use ast::Statement::{Assignment, Declaration, Expr, Goto, Increment, If, LabelStatement, Return};
+use ast::{Expression, Function, Program, Statement, Variable, int_val};
+use ast::Expression::{Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, ShiftLeft, ShiftRight, Subtraction, Val};
+use ast::Statement::{Assignment, Decrement, Expr, Goto, If, Increment, Input, Output, LabelStatement, Return};
 use ast::Value::{self, LValue, RValue};
-use ast::LeftValue::{self, Indirect, Var};
+use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Var};
 use ast::RightValue::{IntLiteral, StringLiteral};
+use asm::decoder::BASE_ADDRESS;
 use asm::decoder::Address::{self, AbsoluteAddress, AddressLabel, RelativeAddress};
 use asm::decoder::DirectOperand::{self, AddressOperand, Imm8, Reg, Regs};
-use asm::decoder::Instruction::{Cmp, Halt, Inc, InconditionalJump, Jump, Load, Nop};
-use asm::decoder::Operand::{self, Direct, Indirection};
+use asm::decoder::Instruction::{Add, And, Bit, Call, Cmp, Complement, Dec, DisableInterrupt, EnableInterrupt, Halt, Inc, InconditionalJump, Jump, Load, LoadIncrement, Nop, Or, Pop, Push, Ret, RotateLeft, RotateLeftCarry, RotateRight, RotateRightCarry, ShiftLeftArithmetic, ShiftRightLogical, ShiftRightArithmetic, Sub, Swap, Xor};
+use asm::decoder::Operand::{self, BaseIndirection, Direct, Indirection};
+use asm::decoder::Register::SP;
 use rom::InstructionOrData::{Ascii, Deleted, Instr};
 use rom::RepeatableInstruction::{self, NoRepeat};
 
 const EXIT_ADDRESS: u16 = 0xFEB0; // Address mapped to exit.
+const GRAPHICS_RAM_START_ADDRESS: u16 = 0x8000;
 const START_ADDRESS: u16 = 0x100;
+const WRAM_END: u16 = 0xDFFF;
+const WRAM_START: u16 = 0xC000;
 const WRITE_ADDRESS: u16 = 0xFEA0; // Address mapped to write to stdout.
+
+/// Assign the expression to reg.
+macro_rules! assign {
+    ($reg:expr, $expression:expr) => {
+        Assignment(var!($reg), $expression)
+    };
+}
 
 /// Call the extract function on every statement.
 macro_rules! extract_from_if {
@@ -56,24 +68,30 @@ macro_rules! extract_from_if {
     }};
 }
 
+/// Create an l-value from a register name.
+macro_rules! lvalue {
+    ($reg:expr) => {
+        Val(LValue(var!($reg)))
+    };
+}
+
 /// Produce a call statement if it is not in debug mode.
 macro_rules! mapped_call {
-    ($decompiler:expr, $function_name:expr, $value:expr, $index:expr) => {
+    ($decompiler:expr, $function_name:expr, $value:expr) => {
         if $decompiler.debug {
-            Expr(Call($function_name.to_string(), vec![$decompiler.expression(&$value)]))
+            Expr(FunctionCall($function_name.to_string(), vec![$decompiler.expression(&$value)]))
         }
         else {
-            next_statement!($decompiler, $index)
+            return None;
         }
     };
 }
 
-/// Ignore the current instruction and decompile the next one.
-macro_rules! next_statement {
-    ($decompiler:expr, $index:expr) => {{
-        *$index += 1;
-        $decompiler.statement($index)
-    }};
+/// Create a variable from a &str.
+macro_rules! var {
+    ($reg:expr) => {
+        Var($reg.to_string())
+    };
 }
 
 /// Instructions with labels.
@@ -115,20 +133,43 @@ impl Instructions {
         match instruction {
             NoRepeat(Instr(ref mut instruction)) => {
                 match *instruction {
-                    Cmp(Direct(Imm8(_))) => (),
-                    Halt => (),
-                    Inc(Direct(Regs(_, _))) => (),
+                    Add(_, _) |
+                        And(_) |
+                        Bit(_, _) |
+                        Cmp(_) |
+                        Complement |
+                        Dec(_) |
+                        DisableInterrupt |
+                        EnableInterrupt |
+                        Halt |
+                        Inc(_) |
+                        LoadIncrement(_, _) |
+                        Nop |
+                        Or(_) |
+                        Pop(_, _) |
+                        Push(_, _) |
+                        Ret |
+                        RotateLeft(_) |
+                        RotateLeftCarry(_) |
+                        RotateRight(_) |
+                        RotateRightCarry(_) |
+                        ShiftLeftArithmetic(_) |
+                        ShiftRightLogical(_) |
+                        ShiftRightArithmetic(_) |
+                        Sub(_, _) |
+                        Swap(_) |
+                        Xor(_)
+                    => (),
                     // NOTE: an immediate value of 16 bits is an address.
-                    InconditionalJump(ref mut address) =>
-                        self.add_visited_label(address, instruction_address),
-                    Jump(_, ref mut address) =>
-                        self.add_visited_label(address, instruction_address),
-                    Load(_, Direct(AddressOperand(ref mut address))) =>
+                    Call(ref mut address) |
+                        InconditionalJump(ref mut address) |
+                        Jump(_, ref mut address) |
+                        Load(_, Direct(AddressOperand(ref mut address)))
+                    =>
                         self.add_visited_label(address, instruction_address),
                     /*Load(Indirection(AddressOperand(ref mut address)), _) =>
                         self.add_visited_label(address, instruction_address),*/ // TODO: remove if not necessary. Or use it only when the address is not known (i.e. not a write to the screen).
                     Load(_, _) => (),
-                    Nop => (),
                     _ => panic!("Instruction: {:?}", instruction),
                 }
             },
@@ -149,9 +190,11 @@ impl Instructions {
 
         match *address {
             AbsoluteAddress(absolute_address) => {
-                let label = label(absolute_address);
-                self.used_labels.insert(label.clone());
-                *address = AddressLabel(label);
+                if absolute_address < GRAPHICS_RAM_START_ADDRESS {
+                    let label = label(absolute_address);
+                    self.used_labels.insert(label.clone());
+                    *address = AddressLabel(label);
+                }
             },
             AddressLabel(_) => (),
             RelativeAddress(_) => panic!("Relative address should have been converted to absolute."),
@@ -183,19 +226,27 @@ impl<'a> Index<&'a String> for Instructions {
 /// The Z80 assembly decompiler.
 pub struct Decompiler {
     address_map: HashMap<String, LeftValue>,
+    debug: bool,
+    functions_to_visit: VecDeque<String>,
     instructions: Instructions,
     program: Program,
-    debug: bool,
+    visited_functions: HashSet<String>,
 }
 
 impl Decompiler {
     /// Create a new decompiler.
     pub fn new(instructions: Instructions, debug: bool) -> Decompiler {
+        let mut visited_functions = HashSet::new();
+        visited_functions.insert("push".to_string());
+        visited_functions.insert("pop".to_string());
+
         Decompiler {
             address_map: HashMap::new(),
+            debug: debug,
+            functions_to_visit: VecDeque::new(),
             instructions: instructions,
             program: Program::new(),
-            debug: debug,
+            visited_functions: visited_functions,
         }
     }
 
@@ -222,31 +273,53 @@ impl Decompiler {
 
         let function = self.function("game", game_label);
         self.program.add_func(function);
+
+        while let Some(function_label) = self.functions_to_visit.pop_front() {
+            if !self.visited_functions.contains(&function_label) {
+                let function = self.function(&function_label, function_label.to_string());
+                self.program.add_func(function);
+            }
+        }
+
         self.program
+    }
+
+    /// Decompile a direct operand.
+    fn direct_operand(&mut self, operand: &DirectOperand) -> Expression {
+        match *operand {
+            ref reg@Reg(_) | ref reg@Regs(_, _) =>
+                Val(LValue(Var(register_to_name(&reg)))),
+            AddressOperand(AbsoluteAddress(address)) =>
+                int_val(address as u32),
+            AddressOperand(AddressLabel(ref label)) =>
+                Val(LValue(self.get_value_from_label(label))),
+            Imm8(number) =>
+                int_val(number as u32),
+            _ => panic!("Unimplemented direct expression {:?}.", operand),
+        }
     }
 
     /// Decompile an expression.
     fn expression(&mut self, expression: &Operand) -> Expression {
         match *expression {
-            Direct(ref direct) =>
-                match *direct {
-                    ref reg@Reg(_) | ref reg@Regs(_, _) =>
-                        Val(LValue(Var(register_to_name(&reg)))),
-                    AddressOperand(AddressLabel(ref label)) =>
-                        Val(LValue(self.get_value_from_label(label))),
-                    Imm8(number) =>
-                        Val(RValue(IntLiteral(number))),
-                    _ => panic!("Unimplemented direct expression {:?}.", direct),
-                },
+            Direct(ref direct) => self.direct_operand(direct),
             Indirection(ref reg@Regs(_, _)) =>
                 Val(LValue(Indirect(register_to_name(reg)))),
+            Indirection(AddressOperand(AbsoluteAddress(address))) if is_wram(address) =>
+                Val(LValue(Ram(address - WRAM_START))),
             _ => panic!("Unimplemented expression {:?}.", expression),
         }
     }
 
     /// Get the index of the statements pointing to the jump contained within the statement.
-    fn extract_jumps(&self, statement: &Statement) -> Vec<usize> {
+    fn extract_jumps(&mut self, statement: &Statement) -> Vec<usize> {
         match *statement {
+            Expr(FunctionCall(ref label, _)) => {
+                if (!self.debug || (label != "putchar" && label != "exit")) && !self.visited_functions.contains(label) {
+                    self.functions_to_visit.push_back(label.clone());
+                }
+                vec![]
+            },
             Goto(ref label) =>
                 vec![self.instructions.labels[label]],
             If(_, ref true_statements, ref else_statements) =>
@@ -257,26 +330,35 @@ impl Decompiler {
 
     /// Decompile a function.
     fn function(&mut self, name: &str, function_label: String) -> Function {
+        self.visited_functions.insert(function_label.clone());
+
         let mut function = Function::new(name);
         let mut index = self.instructions.index(&function_label);
-        let mut jumps = HashSet::new();
-        let mut variables = HashSet::new();
+        let mut jumps = VecDeque::new();
+        let mut visited = HashSet::new();
 
-        loop {
-            self.add_label(&mut function, index);
+        'statement: loop {
+            let mut statement;
 
-            let statement = self.statement(&mut index);
+            loop {
+                visited.insert(index);
+                self.add_label(&mut function, index);
 
-            // Save the instruction indexes pointing to the jump contained within the statement (if any).
-            for index in self.extract_jumps(&statement) {
-                jumps.insert(index);
+                statement = self.statement(index);
+                if let None = statement {
+                    index += 1;
+                }
+                else {
+                    break;
+                }
             }
 
-            // Save the variable name to only declare variables once.
-            for variable in extract_variables(&statement) {
-                if !variables.contains(&variable) {
-                    function.prepend_statement(Declaration(variable.clone()));
-                    variables.insert(variable);
+            let statement = statement.unwrap(); // Safe since there is a loop above to discard the None values.
+
+            // Save the instruction indexes pointing to the jump contained within the statement (if any).
+            for idx in self.extract_jumps(&statement) {
+                if !visited.contains(&idx) {
+                    jumps.push_back(idx);
                 }
             }
 
@@ -284,11 +366,13 @@ impl Decompiler {
             function.add_statement(statement);
 
             if is_inconditional {
-                let index_to_check = index + 1;
-                if !jumps.contains(&index_to_check) {
-                    // The decompiler reached the end of the function.
-                    break;
+                while let Some(idx) = jumps.pop_front() {
+                    if !visited.contains(&idx) {
+                        index = idx;
+                        continue 'statement;
+                    }
                 }
+                break;
             }
             index += 1;
         }
@@ -321,51 +405,156 @@ impl Decompiler {
     }
 
     /// Decompile an instruction into a statement.
-    fn statement(&mut self, index: &mut usize) -> Statement {
-        let instruction = self.instructions.instructions[*index].clone();
-        match instruction {
-            NoRepeat(Instr(ref instruction)) => {
-                match *instruction {
-                    Cmp(ref value) =>
-                        Assignment(Var("Z".to_string()), Sub(
-                                Box::new(Val(LValue(Var("A".to_string())))),
-                                Box::new(self.expression(value)))),
-                    Halt => next_statement!(self, index),
-                    Inc(ref operand) =>
-                        Increment(self.left_value(operand)),
-                    InconditionalJump(AddressLabel(ref label)) =>
-                        Goto(label.clone()),
-                    // TODO: output the condition code of each operation.
-                    Jump(condition_code, AddressLabel(ref label)) =>
-                        If(condition_code, vec![Goto(label.clone())], None),
+    fn statement(&mut self, index: usize) -> Option<Statement> {
+        fn stmt(decompiler: &mut Decompiler, instruction: RepeatableInstruction) -> Option<Statement> {
+            let statement =
+                match instruction {
+                    NoRepeat(Instr(instruction)) => {
+                        match instruction {
+                            Add(ref expr1, ref expr2) =>
+                                assign!("A", Addition(
+                                    Box::new(decompiler.expression(expr1)),
+                                    Box::new(decompiler.expression(expr2)),
+                                )),
+                            And(ref expr) =>
+                                assign!("A", BitAnd(
+                                    Box::new(lvalue!("A")),
+                                    Box::new(decompiler.expression(expr)),
+                                )),
+                            Bit(bit, ref expr) =>
+                                assign!("Z", BitAnd(
+                                        Box::new(int_val(bit as u32)),
+                                        Box::new(decompiler.expression(expr)))),
+                            Call(AddressLabel(ref function_name)) =>
+                                Expr(FunctionCall(function_name.clone(), vec![])),
+                            Cmp(ref value) =>
+                                assign!("flags.zero", Subtraction(
+                                        Box::new(lvalue!("A")),
+                                        Box::new(decompiler.expression(value)))),
+                            Complement =>
+                                assign!("A", BitNot(var!("A"))),
+                            Dec(ref operand) =>
+                                Decrement(decompiler.left_value(operand)),
+                            DisableInterrupt => return None, // TODO: disable the interrupt.
+                            EnableInterrupt => return None, // TODO: enable the interrupt.
+                            Halt | Nop => return None,
+                            Inc(ref operand) =>
+                                Increment(decompiler.left_value(operand)),
+                            InconditionalJump(AddressLabel(ref label)) =>
+                                Goto(label.clone()),
+                            // TODO: output the condition code of each operation.
+                            Jump(condition_code, AddressLabel(ref label)) =>
+                                If(condition_code, vec![Goto(label.clone())], None),
 
-                    // Write to mapped address.
-                    Load(Indirection(AddressOperand(AbsoluteAddress(WRITE_ADDRESS))), ref value) =>
-                        mapped_call!(self, "putchar", value, index),
-                    Load(Indirection(AddressOperand(AbsoluteAddress(EXIT_ADDRESS))), ref value) =>
-                        mapped_call!(self, "exit", value, index),
+                            // Write to mapped address.
+                            Load(Indirection(AddressOperand(AbsoluteAddress(WRITE_ADDRESS))), ref value) =>
+                                mapped_call!(decompiler, "putchar", value),
+                            Load(Indirection(AddressOperand(AbsoluteAddress(EXIT_ADDRESS))), ref value) =>
+                                mapped_call!(decompiler, "exit", value),
 
-                    Load(ref destination, ref value) =>
-                        Assignment(self.left_value(destination), self.expression(value)),
-                    Nop => next_statement!(self, index),
-                    _ => panic!("Unexpected instruction: {:?}.", instruction),
-                }
-            },
-            ref instruction => panic!("Unexpected instruction: {:?}.", instruction),
+                            // Ignore write to the stack pointer since it won't exist in the executable.
+                            Load(Direct(Reg(SP)), Direct(AddressOperand(_))) =>
+                                return None,
+
+                            // Write to absolute address is input/output.
+                            Load(BaseIndirection(address, ref index), ref value) if address == BASE_ADDRESS =>
+                                Output(decompiler.direct_operand(index), decompiler.expression(value)),
+                            Load(ref value, BaseIndirection(address, ref index)) if address == BASE_ADDRESS =>
+                                Input(decompiler.expression(value), decompiler.direct_operand(index)),
+
+                            // Ram access.
+                            Load(Indirection(AddressOperand(AbsoluteAddress(address))), ref value) =>
+                                if is_wram(address) {
+                                    Assignment(Ram(address - WRAM_START), decompiler.expression(value))
+                                }
+                                else {
+                                    panic!("Assignment to unknown address. IO?");
+                                },
+
+                            Load(ref destination, ref value) =>
+                                Assignment(decompiler.left_value(destination), decompiler.expression(value)),
+
+                            LoadIncrement(Direct(registers@Regs(_, _)), value) => {
+                                let destination = Direct(registers.clone());
+                                return stmt(decompiler, NoRepeat(Instr(Load(destination, value))))
+                                    .map(|statement|
+                                         if let Assignment(_, rvalue) = statement {
+                                             Assignment(IndirectIncrement(register_to_name(&registers)), rvalue)
+                                         }
+                                         else {
+                                             statement
+                                         }
+                                    );
+                            },
+
+                            Or(ref expr) =>
+                                assign!("A", BitOr(
+                                    Box::new(lvalue!("A")),
+                                    Box::new(decompiler.expression(expr)),
+                                )),
+
+                            Pop(reg1, reg2) =>
+                                Expr(FunctionCall("pop".to_string(), vec![
+                                    // TODO: not sure it works as is.
+                                    lvalue!(register_to_name(&Regs(reg1, reg2)))
+                                ])),
+
+                            Push(reg1, reg2) =>
+                                Expr(FunctionCall("push".to_string(), vec![
+                                    lvalue!(register_to_name(&Regs(reg1, reg2)))
+                                ])),
+
+                            Ret => Return,
+
+                            RotateLeft(Direct(register@Reg(_))) => {
+                                let name = register_to_name(&register);
+                                assign!(name, FunctionCall("rotateLeft".to_string(), vec![
+                                    lvalue!(name)
+                                ]))
+                            },
+
+                            RotateRight(Direct(register@Reg(_))) => {
+                                let name = register_to_name(&register);
+                                assign!(name, FunctionCall("rotateRight".to_string(), vec![
+                                    lvalue!(name)
+                                ]))
+                            },
+
+                            ShiftLeftArithmetic(ref expr) =>
+                                assign!("A", ShiftLeft(Box::new(lvalue!("A")), Box::new(decompiler.expression(expr)))),
+
+                            ShiftRightLogical(ref expr) =>
+                                assign!("A", ShiftRight(Box::new(lvalue!("A")), Box::new(decompiler.expression(expr)))),
+
+                            Sub(ref expr1, ref expr2) =>
+                                assign!("A", Subtraction(
+                                    Box::new(decompiler.expression(expr1)),
+                                    Box::new(decompiler.expression(expr2)),
+                                )),
+
+                            Swap(ref expr) => {
+                                Assignment(decompiler.left_value(expr), FunctionCall("swapNibbles".to_string(), vec![
+                                    decompiler.expression(expr)
+                                ]))
+                            },
+
+                            Xor(ref expr) =>
+                                assign!("A", BitXor(
+                                    Box::new(lvalue!("A")),
+                                    Box::new(decompiler.expression(expr)),
+                                )),
+
+                            _ => panic!("Unexpected instruction: {:?}.", instruction),
+                        }
+                    },
+                    ref instruction => panic!("Unexpected instruction: {:?}.", instruction),
+                };
+
+            Some(statement)
         }
-    }
-}
 
-/// Get the variable name from the instruction if it uses a variable.
-fn extract_variables(statement: &Statement) -> Vec<String> {
-    match *statement {
-        Assignment(Var(ref name), _) =>
-            vec![name.clone()],
-        Expr(_) | Goto(_) | Increment(_) =>
-            vec![],
-        If(_, ref true_statements, ref else_statements) =>
-            extract_from_if!(true_statements, else_statements, extract_variables),
-        _ => panic!("{:?}", statement),
+        let instruction = self.instructions.instructions[index].clone();
+        stmt(self, instruction)
     }
 }
 
@@ -376,24 +565,29 @@ fn get_value_from_data(data: &RepeatableInstruction) -> Value {
             match *data {
                 Ascii(ref string) =>
                     RValue(StringLiteral(string.clone())),
-                _ => panic!("Unexpected data: {:?}.", data),
+                _ => RValue(IntLiteral(0)), // panic!("Unexpected data: {:?}.", data), TODO: remove the IntLiteral
             }
         ,
-        ref data => panic!("Unexpected data: {:?}", data),
+        _ => RValue(IntLiteral(0)), // panic!("Unexpected data: {:?}", data), TODO: remove the IntLiteral
     }
 }
 
 /// Check if a statement is the end of the function.
 fn is_inconditional_jump(statement: &Statement) -> bool {
     match *statement {
-        Goto(_) | Return(_) => true,
+        Goto(_) | Return => true,
         _ => false,
     }
 }
 
+/// Check if the address is within the working ram.
+fn is_wram(address: u16) -> bool {
+    address >= WRAM_START && address <= WRAM_END
+}
+
 /// Create a label from an address.
 pub fn label(address: u16) -> String {
-    format!("label{}", address)
+    address.to_string()
 }
 
 /// Convert a register operand to its name.
