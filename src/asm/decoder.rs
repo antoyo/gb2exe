@@ -116,6 +116,7 @@ const INDIRECT_HL: Operand = indirect_regs!(H, L);
 pub enum Address {
     AbsoluteAddress(u16),
     AddressLabel(String),
+    DataAddress(u16),
     RelativeAddress(i8),
 }
 

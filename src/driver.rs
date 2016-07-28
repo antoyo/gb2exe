@@ -39,8 +39,8 @@ pub fn drive(args: Args) {
             let mut bytes = vec![];
             file.read_to_end(&mut bytes).unwrap();
             if let Some(rom) = Rom::new(&bytes) {
-                let instructions = prettify(rom.instructions);
-                let decompiler = Decompiler::new(instructions, debug);
+                let instructions = prettify(&rom.instructions);
+                let decompiler = Decompiler::new(instructions, debug, &bytes);
                 let program = decompiler.decompile();
                 let source = gen(program, &rom.title, debug);
                 compile(source, output_file, c_only);

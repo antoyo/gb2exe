@@ -26,26 +26,21 @@ use self::Value::*;
 #[derive(Debug)]
 pub struct Program {
     pub functions: Vec<Function>,
-    pub variables: Vec<Variable>,
+    pub rom: Vec<u8>,
 }
 
 impl Program {
     /// Create a new program abstract syntax tree.
-    pub fn new() -> Program {
+    pub fn new(bytes: &[u8]) -> Program {
         Program {
             functions: vec![],
-            variables: vec![],
+            rom: bytes.iter().cloned().collect(),
         }
     }
 
     /// Add a global function.
     pub fn add_func(&mut self, function: Function) {
         self.functions.push(function);
-    }
-
-    /// Add a global variable.
-    pub fn add_var(&mut self, variable: Variable) {
-        self.variables.push(variable);
     }
 }
 
@@ -58,6 +53,7 @@ pub enum Expression {
     BitOr(Box<Expression>, Box<Expression>),
     BitXor(Box<Expression>, Box<Expression>),
     FunctionCall(String, Vec<Expression>),
+    Not(Box<Expression>),
     ShiftLeft(Box<Expression>, Box<Expression>),
     ShiftRight(Box<Expression>, Box<Expression>),
     Subtraction(Box<Expression>, Box<Expression>),
@@ -92,14 +88,14 @@ pub enum LeftValue {
     Indirect(String),
     IndirectIncrement(String),
     Ram(u16),
-    Var(String),
+    Register(String),
+    Var(u16),
 }
 
 /// A r-value.
 #[derive(Clone, Debug)]
 pub enum RightValue {
     IntLiteral(u32),
-    StringLiteral(String),
 }
 
 /// A statement.
@@ -122,23 +118,6 @@ pub enum Statement {
 pub enum Value {
     LValue(LeftValue),
     RValue(RightValue),
-}
-
-/// A variable declaration.
-#[derive(Debug)]
-pub struct Variable {
-    pub name: String,
-    pub value: Value,
-}
-
-impl Variable {
-    /// Create a new variable with a value.
-    pub fn new(name: &str, value: Value) -> Variable {
-        Variable {
-            name: name.to_string(),
-            value: value,
-        }
-    }
 }
 
 /// Create an int literal expression.

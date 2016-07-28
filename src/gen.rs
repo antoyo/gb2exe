@@ -18,10 +18,10 @@
 //! C code generator.
 
 use asm::decoder::ConditionCode::{self, Carry, NoCarry, NonZero, Zero};
-use ast::{Function, Program, Variable};
-use ast::Expression::{self, Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, ShiftLeft, ShiftRight, Subtraction, Val};
-use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Var};
-use ast::RightValue::{self, IntLiteral, StringLiteral};
+use ast::{Function, Program};
+use ast::Expression::{self, Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, Not, ShiftLeft, ShiftRight, Subtraction, Val};
+use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Register, Var};
+use ast::RightValue::{self, IntLiteral};
 use ast::Statement::{self, Assignment, Decrement, Expr, Goto, If, Increment, Input, Output, LabelStatement, Return};
 use ast::Value::{self, LValue, RValue};
 
@@ -49,7 +49,7 @@ uint8_t _HL[2] = {0};
 #define AF (*(uint16_t*)_AF)
 #define BC (*(uint16_t*)_BC)
 #define DE (*(uint16_t*)_DE)
-//#define HL (*(uint16_t*)_HL) // TODO: decomment.
+#define HL (*(uint16_t*)_HL)
 
 #define A (_AF[0])
 #define F (_AF[1])
@@ -60,7 +60,7 @@ uint8_t _HL[2] = {0};
 #define H (_HL[0])
 #define L (_HL[1])
 
-char* HL = 0; // TODO: remove.
+uint8_t ROM_DATA[];
 
 uint8_t rotateLeft(uint8_t n) {
     return (n << 1) | (n >> (BYTE_BITS - 1));
@@ -132,10 +132,8 @@ pub fn gen(program: Program, title: &str, test: bool) -> String {
         program.functions.iter()
             .map(gen_prototype)
             .collect();
-    let codes: Vec<_> =
-        program.variables.into_iter().map(gen_var)
-            .chain(program.functions.into_iter().map(gen_func))
-            .collect();
+    let codes: Vec<_> = program.functions.into_iter().map(gen_func).collect();
+    let rom_data = gen_rom_data(&program.rom);
     let main =
         if test {
             MAIN_FUNCTION_TERMINAL.to_string()
@@ -143,16 +141,16 @@ pub fn gen(program: Program, title: &str, test: bool) -> String {
         else {
             MAIN_FUNCTION_GUI.replace("{}", title)
         };
-    gen_includes() + GLOBALS + &prototypes.join("\n\n") + &main + &codes.join("\n\n")
+    gen_includes() + GLOBALS + &prototypes.join("\n\n") + &main + &codes.join("\n\n") + "\n\n" + &rom_data
 }
 
 /// Generate the code for the condition code.
 fn gen_condition_code(condition_code: ConditionCode) -> String {
     match condition_code {
-        // TODO: use a global flags variable.
-        Carry | NoCarry => "NZ".to_string(), // TODO
-        NonZero => "NZ".to_string(),
-        Zero => "flags.zero == 0".to_string(),
+        Carry => "flags.carry".to_string(),
+        NoCarry => "!flags.carry".to_string(),
+        NonZero => "!flags.zero".to_string(),
+        Zero => "flags.zero".to_string(),
     }
 }
 
@@ -166,7 +164,7 @@ fn gen_expression(expression: Expression) -> String {
         BitNot(expr) =>
             format!("~{}", gen_lvalue(expr)),
         BitOr(expr1, expr2) =>
-            format!("{} ~ {}", gen_expression(*expr1), gen_expression(*expr2)),
+            format!("{} | {}", gen_expression(*expr1), gen_expression(*expr2)),
         BitXor(expr1, expr2) =>
             format!("{} ^ {}", gen_expression(*expr1), gen_expression(*expr2)),
         FunctionCall(name, arguments) => {
@@ -174,6 +172,8 @@ fn gen_expression(expression: Expression) -> String {
             let args = args.join(", ");
             format!("{}({})", function_name(&name), args)
         },
+        Not(expr) =>
+            format!("!{}", gen_expression(*expr)),
         ShiftLeft(expr1, expr2) =>
             format!("{} << {}", gen_expression(*expr1), gen_expression(*expr2)),
         ShiftRight(expr1, expr2) =>
@@ -200,10 +200,11 @@ fn gen_includes() -> String {
 /// Generate the C code for an l-value.
 fn gen_lvalue(lvalue: LeftValue) -> String {
     match lvalue {
-        Indirect(name) => format!("*{}", name),
-        IndirectIncrement(name) => format!("*({}++)", name),
+        Indirect(name) => format!("ROM_DATA[{}]", name),
+        IndirectIncrement(name) => format!("ROM_DATA[{}++]", name),
         Ram(address) => format!("wram[{}]", address),
-        Var(name) => name.clone(),
+        Register(name) => name,
+        Var(address) => address.to_string(),
     }
 }
 
@@ -212,11 +213,24 @@ fn gen_prototype(function: &Function) -> String {
     format!("void {}();", function_name(&function.name))
 }
 
+/// Generate the global variable containing the whole rom.
+fn gen_rom_data(bytes: &[u8]) -> String {
+    let bytes =
+        bytes.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .chunks(16)
+            .map(|chunk| chunk.join(", "))
+            .collect::<Vec<_>>()
+            .join(",\n    ");
+
+    format!("uint8_t ROM_DATA[] = {{\n    {}\n}};", bytes)
+}
+
 /// Generate the C code for an r-value.
 fn gen_rvalue(rvalue: RightValue) -> String {
     match rvalue {
         IntLiteral(integer) => integer.to_string(),
-        StringLiteral(string) => format!("{:?}", string),
     }
 }
 
@@ -273,9 +287,4 @@ fn gen_value(value: Value) -> String {
         LValue(lvalue) => gen_lvalue(lvalue),
         RValue(rvalue) => gen_rvalue(rvalue),
     }
-}
-
-/// Generate the C code for a variable.
-fn gen_var(variable: Variable) -> String {
-    format!("char* {} = {};", variable.name, gen_value(variable.value))
 }

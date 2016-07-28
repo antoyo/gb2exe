@@ -20,19 +20,18 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Index;
 
-use ast::{Expression, Function, Program, Statement, Variable, int_val};
-use ast::Expression::{Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, ShiftLeft, ShiftRight, Subtraction, Val};
+use ast::{Expression, Function, Program, Statement, int_val};
+use ast::Expression::{Addition, BitAnd, BitNot, BitOr, BitXor, FunctionCall, Not, ShiftLeft, ShiftRight, Subtraction, Val};
 use ast::Statement::{Assignment, Decrement, Expr, Goto, If, Increment, Input, Output, LabelStatement, Return};
-use ast::Value::{self, LValue, RValue};
-use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Var};
-use ast::RightValue::{IntLiteral, StringLiteral};
+use ast::Value::LValue;
+use ast::LeftValue::{self, Indirect, IndirectIncrement, Ram, Register, Var};
 use asm::decoder::BASE_ADDRESS;
-use asm::decoder::Address::{self, AbsoluteAddress, AddressLabel, RelativeAddress};
+use asm::decoder::Address::{self, AbsoluteAddress, AddressLabel, DataAddress, RelativeAddress};
 use asm::decoder::DirectOperand::{self, AddressOperand, Imm8, Reg, Regs};
 use asm::decoder::Instruction::{Add, And, Bit, Call, Cmp, Complement, Dec, DisableInterrupt, EnableInterrupt, Halt, Inc, InconditionalJump, Jump, Load, LoadIncrement, Nop, Or, Pop, Push, Ret, RotateLeft, RotateLeftCarry, RotateRight, RotateRightCarry, ShiftLeftArithmetic, ShiftRightLogical, ShiftRightArithmetic, Sub, Swap, Xor};
 use asm::decoder::Operand::{self, BaseIndirection, Direct, Indirection};
 use asm::decoder::Register::SP;
-use rom::InstructionOrData::{Ascii, Deleted, Instr};
+use rom::InstructionOrData::{Deleted, Instr};
 use rom::RepeatableInstruction::{self, NoRepeat};
 
 const EXIT_ADDRESS: u16 = 0xFEB0; // Address mapped to exit.
@@ -45,7 +44,7 @@ const WRITE_ADDRESS: u16 = 0xFEA0; // Address mapped to write to stdout.
 /// Assign the expression to reg.
 macro_rules! assign {
     ($reg:expr, $expression:expr) => {
-        Assignment(var!($reg), $expression)
+        Assignment(register!($reg), $expression)
     };
 }
 
@@ -71,7 +70,7 @@ macro_rules! extract_from_if {
 /// Create an l-value from a register name.
 macro_rules! lvalue {
     ($reg:expr) => {
-        Val(LValue(var!($reg)))
+        Val(LValue(register!($reg)))
     };
 }
 
@@ -88,9 +87,9 @@ macro_rules! mapped_call {
 }
 
 /// Create a variable from a &str.
-macro_rules! var {
+macro_rules! register {
     ($reg:expr) => {
-        Var($reg.to_string())
+        Register($reg.to_string())
     };
 }
 
@@ -99,6 +98,7 @@ pub struct Instructions {
     instructions: Vec<RepeatableInstruction>,
     labels: HashMap<String, usize>,
     labels_by_index: HashMap<usize, String>,
+    labels_used_in_goto: HashSet<usize>,
     used_labels: HashSet<String>,
 }
 
@@ -109,6 +109,7 @@ impl Instructions {
             instructions: vec![],
             labels: HashMap::new(),
             labels_by_index: HashMap::new(),
+            labels_used_in_goto: HashSet::new(),
             used_labels: HashSet::new(),
         }
     }
@@ -163,10 +164,11 @@ impl Instructions {
                     // NOTE: an immediate value of 16 bits is an address.
                     Call(ref mut address) |
                         InconditionalJump(ref mut address) |
-                        Jump(_, ref mut address) |
-                        Load(_, Direct(AddressOperand(ref mut address)))
+                        Jump(_, ref mut address)
                     =>
                         self.add_visited_label(address, instruction_address),
+                    Load(_, Direct(AddressOperand(ref mut address))) =>
+                        self.convert_to_data_address(address),
                     /*Load(Indirection(AddressOperand(ref mut address)), _) =>
                         self.add_visited_label(address, instruction_address),*/ // TODO: remove if not necessary. Or use it only when the address is not known (i.e. not a write to the screen).
                     Load(_, _) => (),
@@ -196,7 +198,7 @@ impl Instructions {
                     *address = AddressLabel(label);
                 }
             },
-            AddressLabel(_) => (),
+            AddressLabel(_) | DataAddress(_) => (),
             RelativeAddress(_) => panic!("Relative address should have been converted to absolute."),
         }
     }
@@ -205,6 +207,16 @@ impl Instructions {
     fn after(&self, label: &String) -> &RepeatableInstruction {
         let index = self.index(label) + 1;
         &self.instructions[index]
+    }
+
+    /// Convert the address to a data address.
+    fn convert_to_data_address(&mut self, address: &mut Address) {
+        match *address {
+            AbsoluteAddress(absolute_address) => {
+                *address = DataAddress(absolute_address);
+            },
+            AddressLabel(_) | DataAddress(_) | RelativeAddress(_) => (),
+        }
     }
 
     /// Get the index from the label.
@@ -225,7 +237,6 @@ impl<'a> Index<&'a String> for Instructions {
 
 /// The Z80 assembly decompiler.
 pub struct Decompiler {
-    address_map: HashMap<String, LeftValue>,
     debug: bool,
     functions_to_visit: VecDeque<String>,
     instructions: Instructions,
@@ -235,17 +246,16 @@ pub struct Decompiler {
 
 impl Decompiler {
     /// Create a new decompiler.
-    pub fn new(instructions: Instructions, debug: bool) -> Decompiler {
+    pub fn new(instructions: Instructions, debug: bool, bytes: &[u8]) -> Decompiler {
         let mut visited_functions = HashSet::new();
         visited_functions.insert("push".to_string());
         visited_functions.insert("pop".to_string());
 
         Decompiler {
-            address_map: HashMap::new(),
             debug: debug,
             functions_to_visit: VecDeque::new(),
             instructions: instructions,
-            program: Program::new(),
+            program: Program::new(bytes),
             visited_functions: visited_functions,
         }
     }
@@ -288,11 +298,11 @@ impl Decompiler {
     fn direct_operand(&mut self, operand: &DirectOperand) -> Expression {
         match *operand {
             ref reg@Reg(_) | ref reg@Regs(_, _) =>
-                Val(LValue(Var(register_to_name(&reg)))),
+                Val(LValue(Register(register_to_name(&reg)))),
             AddressOperand(AbsoluteAddress(address)) =>
                 int_val(address as u32),
-            AddressOperand(AddressLabel(ref label)) =>
-                Val(LValue(self.get_value_from_label(label))),
+            AddressOperand(DataAddress(address)) =>
+                Val(LValue(Var(address))),
             Imm8(number) =>
                 int_val(number as u32),
             _ => panic!("Unimplemented direct expression {:?}.", operand),
@@ -345,7 +355,7 @@ impl Decompiler {
                 self.add_label(&mut function, index);
 
                 statement = self.statement(index);
-                if let None = statement {
+                if statement.is_none() {
                     index += 1;
                 }
                 else {
@@ -363,9 +373,15 @@ impl Decompiler {
             }
 
             let is_inconditional = is_inconditional_jump(&statement);
+            let label_next_instruction = self.get_used_label_by_index(index + 1);
+            let label_exists = label_next_instruction.is_some();
             function.add_statement(statement);
 
-            if is_inconditional {
+            if let Some(label) = label_next_instruction {
+                function.add_statement(Goto(label));
+            }
+
+            if is_inconditional || label_exists {
                 while let Some(idx) = jumps.pop_front() {
                     if !visited.contains(&idx) {
                         index = idx;
@@ -379,18 +395,14 @@ impl Decompiler {
         function
     }
 
-    /// Get a value from an address.
-    /// Add it into the map if it does not exist.
-    fn get_value_from_label(&mut self, label: &String) -> LeftValue {
-        let variable_name = format!("var{}", label);
-        let instruction_label = label.clone();
-        self.address_map.entry(instruction_label)
-            .or_insert({
-                self.program.add_var(Variable::new(&variable_name,
-                    get_value_from_data(&self.instructions[label])));
-                Var(variable_name)
-            })
-            .clone()
+    /// Get a label by index only if it has already been used.
+    fn get_used_label_by_index(&self, index: usize) -> Option<String> {
+        if self.instructions.labels_used_in_goto.contains(&index) {
+            Some(self.instructions.labels_by_index[&index].clone())
+        }
+        else {
+            None
+        }
     }
 
     /// Get an l-value.
@@ -406,7 +418,7 @@ impl Decompiler {
 
     /// Decompile an instruction into a statement.
     fn statement(&mut self, index: usize) -> Option<Statement> {
-        fn stmt(decompiler: &mut Decompiler, instruction: RepeatableInstruction) -> Option<Statement> {
+        fn stmt(decompiler: &mut Decompiler, instruction: RepeatableInstruction, index: usize) -> Option<Statement> {
             let statement =
                 match instruction {
                     NoRepeat(Instr(instruction)) => {
@@ -425,14 +437,15 @@ impl Decompiler {
                                 assign!("Z", BitAnd(
                                         Box::new(int_val(bit as u32)),
                                         Box::new(decompiler.expression(expr)))),
-                            Call(AddressLabel(ref function_name)) =>
-                                Expr(FunctionCall(function_name.clone(), vec![])),
+                            Call(AddressLabel(function_name)) =>
+                                Expr(FunctionCall(function_name, vec![])),
                             Cmp(ref value) =>
-                                assign!("flags.zero", Subtraction(
+                                assign!("flags.zero", Not(Box::new(Subtraction(
                                         Box::new(lvalue!("A")),
-                                        Box::new(decompiler.expression(value)))),
+                                        Box::new(decompiler.expression(value))
+                                )))),
                             Complement =>
-                                assign!("A", BitNot(var!("A"))),
+                                assign!("A", BitNot(register!("A"))),
                             Dec(ref operand) =>
                                 Decrement(decompiler.left_value(operand)),
                             DisableInterrupt => return None, // TODO: disable the interrupt.
@@ -440,11 +453,13 @@ impl Decompiler {
                             Halt | Nop => return None,
                             Inc(ref operand) =>
                                 Increment(decompiler.left_value(operand)),
-                            InconditionalJump(AddressLabel(ref label)) =>
-                                Goto(label.clone()),
+                            InconditionalJump(AddressLabel(label)) => {
+                                decompiler.instructions.labels_used_in_goto.insert(index);
+                                Goto(label)
+                            },
                             // TODO: output the condition code of each operation.
-                            Jump(condition_code, AddressLabel(ref label)) =>
-                                If(condition_code, vec![Goto(label.clone())], None),
+                            Jump(condition_code, AddressLabel(label)) =>
+                                If(condition_code, vec![Goto(label)], None),
 
                             // Write to mapped address.
                             Load(Indirection(AddressOperand(AbsoluteAddress(WRITE_ADDRESS))), ref value) =>
@@ -476,7 +491,7 @@ impl Decompiler {
 
                             LoadIncrement(Direct(registers@Regs(_, _)), value) => {
                                 let destination = Direct(registers.clone());
-                                return stmt(decompiler, NoRepeat(Instr(Load(destination, value))))
+                                return stmt(decompiler, NoRepeat(Instr(Load(destination, value))), index)
                                     .map(|statement|
                                          if let Assignment(_, rvalue) = statement {
                                              Assignment(IndirectIncrement(register_to_name(&registers)), rvalue)
@@ -554,21 +569,7 @@ impl Decompiler {
         }
 
         let instruction = self.instructions.instructions[index].clone();
-        stmt(self, instruction)
-    }
-}
-
-/// Get the value from data bytes.
-fn get_value_from_data(data: &RepeatableInstruction) -> Value {
-    match *data {
-        NoRepeat(ref data) =>
-            match *data {
-                Ascii(ref string) =>
-                    RValue(StringLiteral(string.clone())),
-                _ => RValue(IntLiteral(0)), // panic!("Unexpected data: {:?}.", data), TODO: remove the IntLiteral
-            }
-        ,
-        _ => RValue(IntLiteral(0)), // panic!("Unexpected data: {:?}", data), TODO: remove the IntLiteral
+        stmt(self, instruction, index)
     }
 }
 

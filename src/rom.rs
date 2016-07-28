@@ -37,7 +37,6 @@ const TITLE_SIZE: usize = 15;
 /// Either an instruction or data.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InstructionOrData {
-    Ascii(String),
     DataByte(u8),
     Deleted,
     Instr(Instruction),
